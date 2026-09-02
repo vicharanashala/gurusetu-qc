@@ -207,39 +207,53 @@ function Dashboard() {
     }
   }
 
-  const sourceSlices: DonutDatum[] = (Object.entries(sourceBreakdown) as Array<[
-    EvaluationSourceType,
-    number,
-  ]>)
-    .filter(([, n]) => n > 0)
-    .map(([k, n]) => ({
-      label: SOURCE_LABELS[k],
-      value: n,
-      colorVar: SOURCE_COLORS[k],
-    }))
-
-  const verdictSlices: DonutDatum[] = (Object.entries(verdictBreakdown) as Array<[
-    OverallVerdict,
-    number,
-  ]>)
-    .filter(([, n]) => n > 0)
-    .map(([k, n]) => ({
-      label: VERDICT_LABEL[k],
-      value: n,
-      colorVar: VERDICT_COLORS[k],
-    }))
-
-  const sourceChartConfig = Object.fromEntries(
-    Object.entries(SOURCE_COLORS).map(([k, v]) => [
-      k,
-      { label: SOURCE_LABELS[k as EvaluationSourceType], color: `var(${v})` },
-    ]),
+  // These feed recharts' `data` prop. Rebuilding them on every render gives the
+  // array a new identity each poll, which recharts reads as new data and
+  // replays the donut's grow-in animation every 5 seconds.
+  const sourceSlices: DonutDatum[] = useMemo(
+    () =>
+      (Object.entries(sourceBreakdown) as Array<[EvaluationSourceType, number]>)
+        .filter(([, n]) => n > 0)
+        .map(([k, n]) => ({
+          label: SOURCE_LABELS[k],
+          value: n,
+          colorVar: SOURCE_COLORS[k],
+        })),
+    [sourceBreakdown],
   )
-  const verdictChartConfig = Object.fromEntries(
-    Object.entries(VERDICT_COLORS).map(([k, v]) => [
-      k,
-      { label: VERDICT_LABEL[k as OverallVerdict], color: `var(${v})` },
-    ]),
+
+  const verdictSlices: DonutDatum[] = useMemo(
+    () =>
+      (Object.entries(verdictBreakdown) as Array<[OverallVerdict, number]>)
+        .filter(([, n]) => n > 0)
+        .map(([k, n]) => ({
+          label: VERDICT_LABEL[k],
+          value: n,
+          colorVar: VERDICT_COLORS[k],
+        })),
+    [verdictBreakdown],
+  )
+
+  // Static: derived only from module-level constants.
+  const sourceChartConfig = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(SOURCE_COLORS).map(([k, v]) => [
+          k,
+          { label: SOURCE_LABELS[k as EvaluationSourceType], color: `var(${v})` },
+        ]),
+      ),
+    [],
+  )
+  const verdictChartConfig = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(VERDICT_COLORS).map(([k, v]) => [
+          k,
+          { label: VERDICT_LABEL[k as OverallVerdict], color: `var(${v})` },
+        ]),
+      ),
+    [],
   )
 
   return (
@@ -417,7 +431,7 @@ function Dashboard() {
           </CardHeader>
           <CardContent>
             {sourceSlices.length ? (
-              <div className="relative h-40">
+              <div className="relative flex h-40 justify-center">
                 <Donut
                   data={sourceSlices}
                   centerLabel="inputs"
@@ -439,7 +453,7 @@ function Dashboard() {
           </CardHeader>
           <CardContent>
             {verdictSlices.length ? (
-              <div className="relative h-40">
+              <div className="relative flex h-40 justify-center">
                 <Donut
                   data={verdictSlices}
                   centerLabel="audits"

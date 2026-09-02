@@ -9,6 +9,7 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  Label,
   Pie,
   PieChart,
   Line,
@@ -135,26 +136,49 @@ export function Donut({
           outerRadius="90%"
           strokeWidth={2}
           stroke="var(--background)"
+          // A dashboard donut that re-grows itself on every poll is a
+          // distraction, not a delight. Render it settled.
+          isAnimationActive={false}
         >
           {data.map((entry, i) => (
             <Cell key={i} fill={`var(${entry.colorVar})`} />
           ))}
+          {(centerLabel || centerValue) && (
+            /* Drawn from the pie's own viewBox instead of an absolutely
+               positioned overlay. The overlay had to guess where recharts put
+               the circle and got it wrong: ChartContainer is not `relative`,
+               so `inset-0` resolved against the full-width wrapper. */
+            <Label
+              content={({ viewBox }) => {
+                if (!viewBox || !("cx" in viewBox)) return null
+                const { cx, cy } = viewBox as { cx: number; cy: number }
+                return (
+                  <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle">
+                    {centerValue && (
+                      <tspan
+                        x={cx}
+                        y={centerLabel ? cy - 6 : cy}
+                        className="fill-foreground text-xl font-bold tabular-nums"
+                      >
+                        {centerValue}
+                      </tspan>
+                    )}
+                    {centerLabel && (
+                      <tspan
+                        x={cx}
+                        y={centerValue ? cy + 13 : cy}
+                        className="fill-muted-foreground text-[10px] uppercase tracking-wider"
+                      >
+                        {centerLabel}
+                      </tspan>
+                    )}
+                  </text>
+                )
+              }}
+            />
+          )}
         </Pie>
       </PieChart>
-      {(centerLabel || centerValue) && (
-        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-          {centerValue && (
-            <span className="text-xl font-bold tabular-nums text-foreground">
-              {centerValue}
-            </span>
-          )}
-          {centerLabel && (
-            <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-              {centerLabel}
-            </span>
-          )}
-        </div>
-      )}
     </ChartContainer>
   )
 }
