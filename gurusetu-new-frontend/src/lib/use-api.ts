@@ -23,7 +23,10 @@ function describeError(err: unknown): string {
 interface AsyncState<T> {
   data?: T
   error?: string
+  /** True only for the FIRST load, when there is nothing to show yet. */
   loading: boolean
+  /** True while a background poll is in flight. Never blanks the UI. */
+  refreshing: boolean
   reload: () => void
 }
 
@@ -35,28 +38,46 @@ function useAsync<T>(
   const [data, setData] = useState<T | undefined>(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
   const [tick, setTick] = useState(0)
   const abortRef = useRef<AbortController | null>(null)
+  // Compared against each poll result so an unchanged payload does not produce
+  // a new object identity — without this every 5s tick re-renders the whole
+  // table even when nothing moved.
+  const serializedRef = useRef<string | undefined>(undefined)
+  const hasDataRef = useRef(false)
 
   useEffect(() => {
     abortRef.current?.abort()
     const ctrl = new AbortController()
     abortRef.current = ctrl
-    setLoading(true)
+    // Only the first load may blank the UI. Later polls refresh in place, so
+    // the table keeps its rows, scroll position and focus.
+    if (hasDataRef.current) setRefreshing(true)
+    else setLoading(true)
+
     fn()
       .then((res) => {
-        if (!ctrl.signal.aborted) {
+        if (ctrl.signal.aborted) return
+        const next = JSON.stringify(res)
+        if (next !== serializedRef.current) {
+          serializedRef.current = next
           setData(res)
-          setError(undefined)
         }
+        hasDataRef.current = true
+        setError(undefined)
       })
       .catch((err) => {
         if (!ctrl.signal.aborted && !isAbortError(err)) {
-          setError(describeError(err))
+          // A failed background poll must not wipe good data off the screen;
+          // surface the error only when we have nothing else to show.
+          if (!hasDataRef.current) setError(describeError(err))
         }
       })
       .finally(() => {
-        if (!ctrl.signal.aborted) setLoading(false)
+        if (ctrl.signal.aborted) return
+        setLoading(false)
+        setRefreshing(false)
       })
     return () => ctrl.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -72,6 +93,7 @@ function useAsync<T>(
     data,
     error,
     loading,
+    refreshing,
     reload: () => setTick((t) => t + 1),
   }
 }
@@ -99,16 +121,8 @@ export function useEvaluation(id: string | undefined, whileNotTerminal = true) {
     whileNotTerminal ? 1500 : undefined,
   )
 
-  const isInFlight =
-    state.data && ["pending", "transcribing", "analyzing"].includes(state.data.status)
-  // Re-poll faster while in flight
-  useEffect(() => {
-    if (!isInFlight) return
-    const id = setInterval(() => state.reload(), 1500)
-    return () => clearInterval(id)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isInFlight])
-
+  // useAsync already polls on the interval passed above; a second interval
+  // here would double the request rate for no benefit.
   return state
 }
 

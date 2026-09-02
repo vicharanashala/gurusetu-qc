@@ -25,6 +25,8 @@ import {
   AlertCircleIcon,
   Video,
   XIcon,
+  CheckCircle2Icon,
+  ShieldAlertIcon,
 } from "lucide-react"
 import {
   type Evaluation,
@@ -84,6 +86,40 @@ function Dashboard() {
     scored.length > 0
       ? scored.reduce((a, b) => a + (b.analysis?.overallScore ?? 0), 0) / scored.length
       : 0
+
+  // "Release-ready" mirrors the rubric's own thresholds: only accept-as-is and
+  // accept-with-minor-revisions can ship. revise-before-release and
+  // blocked-on-media cannot.
+  const releaseReady = evaluations.filter((e) =>
+    e.analysis?.verdict === "accept-as-is" ||
+    e.analysis?.verdict === "accept-with-minor-revisions",
+  ).length
+  const needsRevision = evaluations.filter(
+    (e) => e.analysis?.verdict === "revise-before-release",
+  ).length
+  const blockedOnMedia = evaluations.filter(
+    (e) => e.analysis?.verdict === "blocked-on-media",
+  ).length
+  const verdictTotal = releaseReady + needsRevision + blockedOnMedia
+  const readyPct = verdictTotal > 0 ? (releaseReady / verdictTotal) * 100 : 0
+
+  // Load-bearing reds are the rubric's most serious finding: a false claim the
+  // lesson actually depends on. Worth its own tile.
+  const loadBearingReds = evaluations.reduce(
+    (n, e) => n + (e.analysis?.tally?.loadBearingReds ?? 0),
+    0,
+  )
+  const totalReds = evaluations.reduce(
+    (n, e) => n + (e.analysis?.tally?.red ?? 0),
+    0,
+  )
+  const totalClaims = evaluations.reduce(
+    (n, e) => n + (e.analysis?.tally?.total ?? 0),
+    0,
+  )
+  const affectedAudits = evaluations.filter(
+    (e) => (e.analysis?.tally?.loadBearingReds ?? 0) > 0,
+  ).length
 
   const scoreHistory = useMemo(
     () =>
@@ -230,7 +266,10 @@ function Dashboard() {
               stats.reload()
             }}
           >
-            <RefreshCwIcon className="size-4" />
+            {/* Background polls spin this icon instead of blanking the table. */}
+            <RefreshCwIcon
+              className={cn("size-4", list.refreshing && "animate-spin")}
+            />
             Refresh
           </Button>
           <Button
@@ -246,24 +285,113 @@ function Dashboard() {
       </section>
 
       {/* ===== KPI row ===== */}
-      <section className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard
           label="Total evaluations"
           value={stats.data?.total ?? evaluations.length}
-          hint={`${completedCount} completed · ${inProgressCount} in flight`}
+          hint={
+            inProgressCount > 0
+              ? `${inProgressCount} still running`
+              : "all runs settled"
+          }
           icon={<DatabaseIcon className="size-4" />}
-          trend={scoreHistory.length ? scoreHistory : undefined}
+          explain={
+            <>
+              Every audit ever submitted, in any state. The badges split it by
+              status: <strong>completed</strong> finished analysis,{" "}
+              <strong>in flight</strong> is still downloading, transcribing or
+              analysing, and <strong>failed</strong> hit an error before
+              producing a verdict.
+            </>
+          }
+          breakdown={[
+            { label: "Completed", value: completedCount, colorVar: "--chart-1" },
+            { label: "In flight", value: inProgressCount, colorVar: "--chart-3" },
+            { label: "Failed", value: failedCount, colorVar: "--destructive" },
+          ]}
         />
+
         <KpiCard
           label="Average score"
           value={
-            stats.data?.averageScore != null
-              ? stats.data.averageScore.toFixed(1)
-              : avgScore.toFixed(1)
+            scored.length > 0
+              ? (stats.data?.averageScore ?? avgScore).toFixed(1)
+              : "—"
           }
-          hint="across completed evaluations"
+          suffix={scored.length > 0 ? "/ 10" : undefined}
+          hint={
+            scored.length > 0
+              ? `mean of ${scored.length} scored audit${scored.length === 1 ? "" : "s"}`
+              : "nothing scored yet"
+          }
           icon={<SparklesIcon className="size-4" />}
-          trend={scoreHistory}
+          tone="chart-2"
+          explain={
+            <>
+              The mean <strong>overall score</strong> (0–10) across audits that
+              produced one. Failed and in-flight runs are excluded, so this is
+              not an average over all evaluations. The score is the model&apos;s
+              own composite of the rubric axes — factual accuracy, evidence
+              grounding, citation hygiene, and the rest.
+            </>
+          }
+          trend={scoreHistory.length > 1 ? scoreHistory : undefined}
+        />
+
+        <KpiCard
+          label="Release-ready"
+          value={verdictTotal > 0 ? Math.round(readyPct) : "—"}
+          suffix={verdictTotal > 0 ? "%" : undefined}
+          hint={
+            verdictTotal > 0
+              ? `${releaseReady} of ${verdictTotal} audited`
+              : "no verdicts yet"
+          }
+          icon={<CheckCircle2Icon className="size-4" />}
+          tone="chart-1"
+          meter={
+            verdictTotal > 0
+              ? {
+                  value: readyPct,
+                  caption: `${needsRevision} need revision${blockedOnMedia ? ` · ${blockedOnMedia} blocked on media` : ""}`,
+                }
+              : undefined
+          }
+          explain={
+            <>
+              Share of audited content that can ship as-is or with only minor
+              edits — verdicts <strong>accept-as-is</strong> and{" "}
+              <strong>accept-with-minor-revisions</strong>. The remainder is{" "}
+              <strong>revise-before-release</strong> or{" "}
+              <strong>blocked-on-media</strong>. Only audits with a verdict count
+              toward the denominator.
+            </>
+          }
+        />
+
+        <KpiCard
+          label="Load-bearing reds"
+          value={loadBearingReds}
+          hint={
+            loadBearingReds > 0
+              ? `across ${affectedAudits} audit${affectedAudits === 1 ? "" : "s"}`
+              : "none found"
+          }
+          icon={<ShieldAlertIcon className="size-4" />}
+          tone="chart-3"
+          explain={
+            <>
+              The rubric&apos;s most serious finding: a claim that fails outright{" "}
+              <em>and</em> carries the lesson — a central thesis or explicit
+              instruction, not an aside. Any single one forces a{" "}
+              <strong>revise-before-release</strong> verdict, so this is the
+              number to drive to zero.
+            </>
+          }
+          breakdown={[
+            { label: "All reds", value: totalReds, colorVar: "--destructive" },
+            { label: "Claims checked", value: totalClaims },
+          ]}
         />
       </section>
 
@@ -430,7 +558,7 @@ function Dashboard() {
           }}
         />
 
-        {list.loading ? (
+        {list.loading && !list.data ? (
           <div className="flex items-center gap-2 rounded-xl border border-border bg-card px-6 py-10 text-sm text-muted-foreground">
             <LoaderIcon className="size-4 animate-spin" /> Loading audits…
           </div>

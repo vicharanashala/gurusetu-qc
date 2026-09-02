@@ -11,11 +11,15 @@ import { cn } from "@/lib/utils"
 import { AuthProvider, useAuth } from "@/lib/auth"
 import { LoginScreen } from "@/components/login-screen"
 import { Button } from "@/components/ui/button"
+import { TooltipProvider } from "@/components/ui/tooltip"
 
 export const Route = createRootRoute({
   component: () => (
     <AuthProvider>
-      <Gate />
+      {/* One provider at the root; every Tooltip in the tree needs it. */}
+      <TooltipProvider delay={200} closeDelay={100}>
+        <Gate />
+      </TooltipProvider>
     </AuthProvider>
   ),
 })
