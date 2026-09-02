@@ -7,6 +7,49 @@ import type {
 
 const BASE = "/api"
 
+/**
+ * Set by the auth provider. Called whenever any request comes back 401 so the
+ * UI can drop to the login screen without each caller checking for it.
+ */
+let onUnauthorized: (() => void) | undefined
+export const setUnauthorizedHandler = (fn: (() => void) | undefined) => {
+  onUnauthorized = fn
+}
+
+export interface LlmConfigView {
+  protocol: "anthropic" | "openai" | "mock"
+  label: string
+  baseUrl: string
+  model: string
+  apiKeyMasked: string
+  hasApiKey: boolean
+  authHeader: "x-api-key" | "bearer"
+  maxTokens: number
+  temperature: number
+  thinkingEnabled: boolean
+  lastTest?: {
+    at: string
+    ok: boolean
+    message?: string
+    latencyMs?: number
+    model?: string
+  }
+  updatedAt?: string
+}
+
+export interface LlmConfigPayload {
+  protocol: "anthropic" | "openai" | "mock"
+  label?: string
+  baseUrl?: string
+  model?: string
+  /** Omit to keep the stored key; "" clears it. */
+  apiKey?: string
+  authHeader?: "x-api-key" | "bearer"
+  maxTokens?: number
+  temperature?: number
+  thinkingEnabled?: boolean
+}
+
 export class ApiError extends Error {
   status: number
   body: unknown
@@ -20,6 +63,8 @@ export class ApiError extends Error {
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     ...init,
+    // The session is an httpOnly cookie; without this it is never sent.
+    credentials: "include",
     headers: {
       Accept: "application/json",
       ...(init.headers ?? {}),
@@ -33,6 +78,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     body = text
   }
   if (!res.ok) {
+    // A 401 anywhere means the session is gone; let the app react once,
+    // centrally, instead of every caller handling it.
+    if (res.status === 401) onUnauthorized?.()
     const msg = (body as { message?: string | string[] })?.message ?? res.statusText
     throw new ApiError(
       res.status,
@@ -156,6 +204,52 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
     }),
+
+  // ===== auth =====
+
+  authStatus: () => request<{ provisioned: boolean }>("/auth/status"),
+
+  me: () => request<{ username?: string }>("/auth/me"),
+
+  login: (username: string, password: string) =>
+    request<{ username: string; expiresAt: string; token: string }>(
+      "/auth/login",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      },
+    ),
+
+  logout: () => request<{ ok: true }>("/auth/logout", { method: "POST" }),
+
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<{ ok: true }>("/auth/change-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ currentPassword, newPassword }),
+    }),
+
+  // ===== LLM provider (BYOK) =====
+
+  getLlmConfig: () => request<LlmConfigView>("/llm-config"),
+
+  updateLlmConfig: (payload: LlmConfigPayload) =>
+    request<LlmConfigView>("/llm-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+
+  testLlmConfig: (payload: Partial<LlmConfigPayload> = {}) =>
+    request<{ ok: boolean; message?: string; latencyMs?: number; model?: string }>(
+      "/llm-config/test",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      },
+    ),
 
   getPromptHistory: (limit = 10) =>
     request<{

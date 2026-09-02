@@ -1,17 +1,48 @@
 import { Outlet, createRootRoute, Link } from "@tanstack/react-router"
 import {
   LayoutDashboardIcon,
+  LoaderIcon,
+  LogOutIcon,
   PlusIcon,
   SettingsIcon,
   SparklesIcon,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { AuthProvider, useAuth } from "@/lib/auth"
+import { LoginScreen } from "@/components/login-screen"
+import { Button } from "@/components/ui/button"
 
 export const Route = createRootRoute({
-  component: RootLayout,
+  component: () => (
+    <AuthProvider>
+      <Gate />
+    </AuthProvider>
+  ),
 })
 
+/**
+ * Renders the app only for an authenticated session. Everything behind this is
+ * unreachable otherwise — there is no route-level opt-out.
+ */
+function Gate() {
+  const { authenticated, checking } = useAuth()
+
+  if (checking && authenticated === undefined) {
+    return (
+      <div className="grid min-h-svh place-items-center">
+        <LoaderIcon className="size-5 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
+
+  if (!authenticated) return <LoginScreen />
+
+  return <RootLayout />
+}
+
 function RootLayout() {
+  const { username, logout } = useAuth()
+
   return (
     <div className="flex min-h-svh flex-col">
       <header className="sticky top-0 z-30 border-b border-border/60 bg-background/80 backdrop-blur-md">
@@ -37,9 +68,16 @@ function RootLayout() {
             </NavLink>
           </nav>
           <div className="ml-auto flex items-center gap-3">
-            <span className="hidden text-xs text-muted-foreground sm:inline">
-              Connected to <code className="text-primary">localhost:4187</code>
-            </span>
+            {username && (
+              <span className="hidden text-xs text-muted-foreground sm:inline">
+                Signed in as{" "}
+                <span className="text-foreground">{username}</span>
+              </span>
+            )}
+            <Button variant="ghost" size="sm" onClick={() => void logout()}>
+              <LogOutIcon className="size-4" />
+              Sign out
+            </Button>
           </div>
         </div>
       </header>
@@ -50,10 +88,7 @@ function RootLayout() {
 
       <footer className="border-t border-border/40 py-4">
         <p className="text-center text-xs text-muted-foreground">
-          GuruSetu QC · backend on{" "}
-          <code className="text-secondary-foreground">localhost:4187</code> ·
-          frontend on{" "}
-          <code className="text-secondary-foreground">localhost:4188</code>
+          GuruSetu QC · quality auditing for teaching content
         </p>
       </footer>
     </div>

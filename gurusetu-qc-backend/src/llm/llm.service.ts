@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { AppConfig } from '../config/configuration';
+import {
+  LlmConfigService,
+  ResolvedLlmConfig,
+} from '../llm-config/llm-config.service';
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -12,6 +14,8 @@ export interface ChatOptions {
   maxTokens?: number;
   json?: boolean;
   signal?: AbortSignal;
+  /** Override the stored config — used by the "Test connection" button. */
+  override?: ResolvedLlmConfig;
 }
 
 export interface ChatResult {
@@ -26,116 +30,193 @@ export interface ChatResult {
   };
 }
 
+const DEFAULT_ANTHROPIC_BASE = 'https://api.anthropic.com/v1';
+const DEFAULT_OPENAI_BASE = 'https://api.openai.com/v1';
+
 /**
- * Sends chat requests to the configured LLM provider.
+ * Talks to whichever provider the admin configured in Settings (BYOK).
  *
- * The MiniMax provider exposed at agent.minimax.io speaks the Anthropic Messages
- * protocol (URL .../v1/messages, x-api-key auth) regardless of which Claude /
- * M-* model is named. We therefore always use the Messages protocol when talking
- * to the MiniMax base URL.
+ * Two wire protocols are supported, and the distinction is the request shape,
+ * not the vendor:
+ *   - anthropic → POST {base}/messages, system lifted out of the message list
+ *   - openai    → POST {base}/chat/completions, system stays inline as a message
+ *
+ * Anything that speaks either protocol works: Anthropic itself, OpenAI, MiniMax,
+ * OpenRouter, Together, a local vLLM/Ollama gateway, and so on.
  */
 @Injectable()
 export class LlmService {
   private readonly logger = new Logger(LlmService.name);
 
-  constructor(private readonly config: ConfigService<AppConfig, true>) {}
+  constructor(private readonly llmConfig: LlmConfigService) {}
 
   async chat(
     messages: ChatMessage[],
     options: ChatOptions = {},
   ): Promise<ChatResult> {
-    const provider = this.config.get('llmProvider', { infer: true });
-    const temperature = options.temperature ?? 0.2;
-    const maxTokens = options.maxTokens ?? 4096;
+    const cfg = options.override ?? (await this.llmConfig.resolve());
 
-    if (provider === 'mock') {
+    if (cfg.protocol === 'mock') {
       return this.mockChat(messages, options);
     }
-
-    const urlBase = this.config.get('minimax.baseUrl', { infer: true });
-    const apiKey = this.config.get('minimax.apiKey', { infer: true });
-    const model = this.config.get('minimax.model', { infer: true });
-
-    // Anthropic Messages protocol: lift system messages out, keep user/assistant.
-    const systemParts: string[] = [];
-    const filtered: Array<{ role: 'user' | 'assistant'; content: string }> = [];
-    for (const m of messages) {
-      if (m.role === 'system') {
-        systemParts.push(m.content);
-      } else if (m.role === 'user' || m.role === 'assistant') {
-        filtered.push({ role: m.role, content: m.content });
-      }
+    if (!cfg.apiKey) {
+      throw new Error(
+        'No API key configured. Add one in Settings → LLM provider.',
+      );
     }
-    if (filtered.length === 0) {
+    if (!cfg.model) {
+      throw new Error('No model configured. Set one in Settings → LLM provider.');
+    }
+
+    const temperature = options.temperature ?? cfg.temperature;
+    const maxTokens = options.maxTokens ?? cfg.maxTokens;
+
+    return cfg.protocol === 'anthropic'
+      ? this.chatAnthropic(cfg, messages, temperature, maxTokens, options)
+      : this.chatOpenAi(cfg, messages, temperature, maxTokens, options);
+  }
+
+  // ===== Anthropic Messages protocol =====
+
+  private async chatAnthropic(
+    cfg: ResolvedLlmConfig,
+    messages: ChatMessage[],
+    temperature: number,
+    maxTokens: number,
+    options: ChatOptions,
+  ): Promise<ChatResult> {
+    // System prompts are a top-level field here, not a message.
+    const systemParts: string[] = [];
+    const turns: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+    for (const m of messages) {
+      if (m.role === 'system') systemParts.push(m.content);
+      else turns.push({ role: m.role, content: m.content });
+    }
+    if (turns.length === 0) {
       throw new Error('LLM call requires at least one non-system message');
     }
 
     const body: Record<string, unknown> = {
-      model,
+      model: cfg.model,
       max_tokens: maxTokens,
-      messages: filtered,
+      messages: turns,
       temperature,
     };
-    if (systemParts.length > 0) {
-      body.system = systemParts.join('\n\n');
-    }
-    // Disable extended thinking by default — analysis output should land in
-    // text blocks, not eat the budget on internal reasoning. Operators can
-    // flip MINIMAX_THINKING=enable to opt back in.
-    if ((process.env.MINIMAX_THINKING ?? 'disable') !== 'enable') {
-      body.thinking = { type: 'disabled' };
-    }
+    if (systemParts.length > 0) body.system = systemParts.join('\n\n');
+    if (!cfg.thinkingEnabled) body.thinking = { type: 'disabled' };
 
-    const res = await fetch(`${urlBase.replace(/\/$/, '')}/messages`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify(body),
-      signal: options.signal,
-    });
-
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`LLM HTTP ${res.status}: ${text.slice(0, 500)}`);
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'anthropic-version': '2023-06-01',
+    };
+    if (cfg.authHeader === 'bearer') {
+      headers.Authorization = `Bearer ${cfg.apiKey}`;
+    } else {
+      headers['x-api-key'] = cfg.apiKey;
     }
 
-    const data = (await res.json()) as Record<string, any>;
+    const base = (cfg.baseUrl || DEFAULT_ANTHROPIC_BASE).replace(/\/$/, '');
+    const data = await this.post(`${base}/messages`, headers, body, options.signal);
+
     let content = '';
     if (Array.isArray(data.content)) {
       for (const block of data.content) {
-        // Skip "thinking" blocks — they don't represent the final answer.
+        // Skip "thinking" blocks — they are not the answer.
         if (block?.type === 'text' && typeof block.text === 'string') {
           content += block.text;
         }
       }
     }
-    if (!content && typeof data.completion === 'string') {
-      content = data.completion;
-    }
-    if (!content && data.choices?.[0]?.message?.content) {
-      content =
-        typeof data.choices[0].message.content === 'string'
-          ? data.choices[0].message.content
-          : JSON.stringify(data.choices[0].message.content);
-    }
+    if (!content && typeof data.completion === 'string') content = data.completion;
 
     return {
       content,
       raw: data,
-      provider: 'minimax',
-      model,
+      provider: 'anthropic',
+      model: data.model ?? cfg.model,
       usage: data.usage
         ? {
-            promptTokens: data.usage.input_tokens ?? data.usage.prompt_tokens,
-            completionTokens:
-              data.usage.output_tokens ?? data.usage.completion_tokens,
+            promptTokens: data.usage.input_tokens,
+            completionTokens: data.usage.output_tokens,
+            totalTokens:
+              (data.usage.input_tokens ?? 0) + (data.usage.output_tokens ?? 0),
+          }
+        : undefined,
+    };
+  }
+
+  // ===== OpenAI Chat Completions protocol =====
+
+  private async chatOpenAi(
+    cfg: ResolvedLlmConfig,
+    messages: ChatMessage[],
+    temperature: number,
+    maxTokens: number,
+    options: ChatOptions,
+  ): Promise<ChatResult> {
+    const body: Record<string, unknown> = {
+      model: cfg.model,
+      messages: messages.map((m) => ({ role: m.role, content: m.content })),
+      temperature,
+      max_tokens: maxTokens,
+    };
+    // Ask for a JSON object when the caller needs parseable output. Providers
+    // that don't support the flag generally ignore it rather than erroring.
+    if (options.json) body.response_format = { type: 'json_object' };
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${cfg.apiKey}`,
+    };
+
+    const base = (cfg.baseUrl || DEFAULT_OPENAI_BASE).replace(/\/$/, '');
+    const data = await this.post(
+      `${base}/chat/completions`,
+      headers,
+      body,
+      options.signal,
+    );
+
+    const choice = data.choices?.[0];
+    const raw = choice?.message?.content;
+    const content =
+      typeof raw === 'string' ? raw : raw ? JSON.stringify(raw) : '';
+
+    return {
+      content,
+      raw: data,
+      provider: 'openai',
+      model: data.model ?? cfg.model,
+      usage: data.usage
+        ? {
+            promptTokens: data.usage.prompt_tokens,
+            completionTokens: data.usage.completion_tokens,
             totalTokens: data.usage.total_tokens,
           }
         : undefined,
     };
+  }
+
+  // ===== shared =====
+
+  private async post(
+    url: string,
+    headers: Record<string, string>,
+    body: unknown,
+    signal?: AbortSignal,
+  ): Promise<Record<string, any>> {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal,
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      // Truncate: provider errors can echo the whole request back.
+      throw new Error(`LLM HTTP ${res.status}: ${text.slice(0, 500)}`);
+    }
+    return (await res.json()) as Record<string, any>;
   }
 
   private async mockChat(
@@ -144,12 +225,11 @@ export class LlmService {
   ): Promise<ChatResult> {
     // Deterministic placeholder so the pipeline can be exercised without a key.
     const last = messages[messages.length - 1]?.content ?? '';
-    const summary = last.slice(0, 200);
     const payload = options.json
       ? {
           mock: true,
-          received: summary,
-          note: 'Set LLM_PROVIDER=minimax or openai to receive real analysis.',
+          received: last.slice(0, 200),
+          note: 'Configure a real provider in Settings to receive real analysis.',
         }
       : `[mock LLM response] received prompt of ${last.length} chars`;
     return {

@@ -30,6 +30,8 @@ import {
   SaveIcon,
 } from "lucide-react"
 import { formatDateTime, formatRelative } from "@/lib/format"
+import { LlmProviderCard } from "@/components/llm-provider-card"
+import { ChangePasswordCard } from "@/components/change-password-card"
 import { cn } from "@/lib/utils"
 
 export const Route = createFileRoute("/settings")({
@@ -159,11 +161,15 @@ function Settings() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          The GuruSetu QC system prompt is what turns a generic LLM into the
-          rubric-driven reviewer. Edits take effect on the next evaluation
-          (no server restart needed).
+          Provider credentials, the admin password, and the QC system prompt.
+          All of it takes effect on the next evaluation — no server restart
+          needed.
         </p>
       </div>
+
+      <LlmProviderCard />
+
+      <ChangePasswordCard />
 
       <Card>
         <CardHeader>

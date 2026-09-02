@@ -30,6 +30,7 @@ import { YoutubeService } from '../youtube/youtube.service';
 import { TranscriptionService } from '../transcription/transcription.service';
 import { AnalysisService } from '../analysis/analysis.service';
 import { LlmService } from '../llm/llm.service';
+import { LlmConfigService } from '../llm-config/llm-config.service';
 import { PromptsService } from '../prompts/prompts.service';
 import { TranscriptResult } from '../transcription/transcription.service';
 
@@ -62,6 +63,7 @@ export class EvaluationsService {
     private readonly analysis: AnalysisService,
     private readonly llm: LlmService,
     private readonly prompts: PromptsService,
+    private readonly llmConfig: LlmConfigService,
   ) {}
 
   // ===== Creation entrypoints =====
@@ -482,13 +484,11 @@ export class EvaluationsService {
       title: doc.title,
       verticalHint: opts.verticalHint,
     });
-    const llmProvider = this.config.get('llmProvider', { infer: true }) as string;
-    const model =
-      llmProvider === 'minimax'
-        ? (this.config.get('minimax.model', { infer: true }) as string)
-        : llmProvider === 'openai'
-          ? (this.config.get('openai.analysisModel', { infer: true }) as string)
-          : 'mock';
+    // Record what actually ran, read from the admin-configured provider rather
+    // than from .env — the two can differ now that config lives in the DB.
+    const activeLlm = await this.llmConfig.resolve();
+    const llmProvider = activeLlm.protocol;
+    const model = activeLlm.protocol === 'mock' ? 'mock' : activeLlm.model;
 
     const activePrompt = await this.prompts.getActive();
 

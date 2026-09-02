@@ -7,6 +7,7 @@ import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { AppConfig } from './config/configuration';
 import { mkdirSync } from 'fs';
+import cookieParser from 'cookie-parser';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
@@ -25,6 +26,9 @@ async function bootstrap() {
   // Body parsers — re-configure with a generous limit (default is 100kb).
   // Express's json/urlencoded parsers automatically skip multipart/form-data,
   // so they coexist cleanly with multer on the upload route.
+  // Session token travels in an httpOnly cookie; AuthGuard reads req.cookies.
+  app.use(cookieParser());
+
   app.useBodyParser('json', { limit: '25mb' });
   app.useBodyParser('urlencoded', { limit: '25mb', extended: true });
   // multer (multipart) is wired per-route via @UseInterceptors(FileInterceptor).
@@ -45,7 +49,9 @@ async function bootstrap() {
     credentials: true,
   });
 
-  // Root info endpoint
+  // Root info endpoint. Registered on the underlying Express adapter rather
+  // than a Nest controller, so the global AuthGuard never sees it — health
+  // checks must work without a session.
   app.getHttpAdapter().get('/health', (_req: any, res: any) => {
     res.json({
       status: 'ok',
