@@ -11,9 +11,11 @@ import {
   BookOpenIcon,
   TargetIcon,
   CheckCircle2Icon,
+  ShieldAlertIcon,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   Card,
   CardContent,
@@ -30,14 +32,6 @@ import {
 import { Progress } from "@/components/ui/progress"
 import { Separator } from "@/components/ui/separator"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -48,14 +42,18 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
-import {
-  Empty,
-  
-  EmptyDescription,
-  EmptyHeader,
-  EmptyTitle,
-} from "@/components/ui/empty"
 import { StatusBadge, VerdictBadge } from "@/components/badges"
+import { ClaimsList } from "@/components/claims-list"
+import { ScorecardPanel } from "@/components/scorecard-panel"
+import {
+  Item,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemMedia,
+  ItemSeparator,
+  ItemTitle,
+} from "@/components/ui/item"
 import { useEvaluation, useEvaluationList } from "@/lib/use-api"
 import { api } from "@/lib/api"
 import { formatRelative, formatShortDate } from "@/lib/format"
@@ -64,9 +62,7 @@ import {
 
   type OverallVerdict,
   type Tally,
-  type Scorecard,
   type VerticalFit,
-  type ClaimItem,
 } from "@/lib/types"
 
 export const Route = createFileRoute("/evaluations/$evaluationId")({
@@ -268,7 +264,7 @@ function EvaluationDetail() {
       {/* ===== Tabs ===== */}
       {analysis && (
         <Tabs defaultValue="overview" className="w-full">
-          <TabsList>
+          <TabsList className="max-w-full overflow-x-auto">
             <TabsTrigger value="overview">
               <SparklesIcon className="mr-1.5 size-4" /> Overview
             </TabsTrigger>
@@ -285,6 +281,8 @@ function EvaluationDetail() {
               <OverallScoreCard
                 score={analysis.overallScore}
                 verdict={analysis.verdict}
+                claimCount={analysis.tally.total}
+                model={e.analysisModel}
               />
               <TallyCard tally={analysis.tally} />
               <VerticalFitCard fit={analysis.verticalFit} />
@@ -344,12 +342,12 @@ function EvaluationDetail() {
 
           {/* ----- Claims ----- */}
           <TabsContent value="claims">
-            <ClaimsTable claims={analysis.claims} />
+            <ClaimsList claims={analysis.claims} tally={analysis.tally} />
           </TabsContent>
 
           {/* ----- Scorecard ----- */}
           <TabsContent value="scorecard">
-            <ScorecardGrid scorecard={analysis.scorecard} />
+            <ScorecardPanel scorecard={analysis.scorecard} />
           </TabsContent>
 
           {/* ----- Transcript ----- */}
@@ -397,25 +395,57 @@ function EvaluationDetail() {
 function OverallScoreCard({
   score,
   verdict,
+  claimCount,
+  model,
 }: {
   score: number
   verdict: OverallVerdict
+  claimCount: number
+  model?: string
 }) {
   return (
     <Card>
       <CardHeader>
         <CardTitle>Overall score</CardTitle>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-3">
         <div className="flex items-baseline gap-2">
           <span className="text-5xl font-bold tabular-nums">
             {score.toFixed(1)}
           </span>
           <span className="text-muted-foreground">/ 10</span>
         </div>
-        <div className="mt-3">
-          <VerdictBadge verdict={verdict} />
-        </div>
+        <Progress
+          value={score * 10}
+          className={`[&_[data-slot=progress-track]]:h-2 ${
+            score >= 7.5
+              ? "[&_[data-slot=progress-indicator]]:bg-verdict-green"
+              : score >= 5
+                ? "[&_[data-slot=progress-indicator]]:bg-verdict-amber"
+                : "[&_[data-slot=progress-indicator]]:bg-verdict-red"
+          }`}
+        />
+        <VerdictBadge verdict={verdict} />
+        <ItemGroup className="pt-1">
+          <ItemSeparator />
+          <Item size="xs">
+            <ItemContent>
+              <ItemDescription>Claims audited</ItemDescription>
+              <ItemTitle className="tabular-nums">{claimCount}</ItemTitle>
+            </ItemContent>
+          </Item>
+          {model && (
+            <>
+              <ItemSeparator />
+              <Item size="xs">
+                <ItemContent>
+                  <ItemDescription>Analysed by</ItemDescription>
+                  <ItemTitle className="font-mono text-xs">{model}</ItemTitle>
+                </ItemContent>
+              </Item>
+            </>
+          )}
+        </ItemGroup>
       </CardContent>
     </Card>
   )
@@ -423,54 +453,82 @@ function OverallScoreCard({
 
 function TallyCard({ tally }: { tally: Tally }) {
   const total = Math.max(tally.total, 1)
-  const greenPct = (tally.green / total) * 100
-  const amberPct = (tally.amber / total) * 100
-  const redPct = (tally.red / total) * 100
   return (
     <Card>
       <CardHeader>
         <CardTitle>Claim tally</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="flex h-3 w-full overflow-hidden rounded-full bg-muted">
-          <div
-            className="bg-verdict-green"
-            style={{ width: `${greenPct}%` }}
-          />
-          <div
-            className="bg-verdict-amber"
-            style={{ width: `${amberPct}%` }}
-          />
-          <div
-            className="bg-verdict-red"
-            style={{ width: `${redPct}%` }}
-          />
-        </div>
-        <div className="grid grid-cols-3 gap-2 text-center">
-          <div>
-            <div className="text-2xl font-bold tabular-nums text-verdict-green">
-              {tally.green}
+      <CardContent>
+        <ItemGroup>
+          {/* Every Tailwind class here is a complete literal. Building them by
+              interpolating a variable (`...:${dot}`) does not work: the JIT
+              scanner only ever sees source text, so the class would silently
+              not exist in the stylesheet. */}
+          {([
+            {
+              label: "Green",
+              n: tally.green,
+              dot: "bg-verdict-green",
+              text: "text-verdict-green",
+              bar: "[&_[data-slot=progress-indicator]]:bg-verdict-green",
+              desc: "Verified and honestly framed",
+            },
+            {
+              label: "Amber",
+              n: tally.amber,
+              dot: "bg-verdict-amber",
+              text: "text-verdict-amber",
+              bar: "[&_[data-slot=progress-indicator]]:bg-verdict-amber",
+              desc: "Directionally right, imprecisely stated",
+            },
+            {
+              label: "Red",
+              n: tally.red,
+              dot: "bg-verdict-red",
+              text: "text-verdict-red",
+              bar: "[&_[data-slot=progress-indicator]]:bg-verdict-red",
+              desc: "Fails outright, stated as fact",
+            },
+          ] as const).map(({ label, n, dot, text, bar, desc }, i) => (
+            <div key={label}>
+              {i > 0 && <ItemSeparator />}
+              <Item size="xs">
+                <ItemMedia>
+                  <span aria-hidden className={`size-2 rounded-full ${dot}`} />
+                </ItemMedia>
+                <ItemContent className="gap-1">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <ItemTitle>{label}</ItemTitle>
+                    <span className={`text-sm font-semibold tabular-nums ${text}`}>
+                      {n}
+                      <span className="ml-1 text-xs font-normal text-muted-foreground">
+                        {Math.round((n / total) * 100)}%
+                      </span>
+                    </span>
+                  </div>
+                  <Progress
+                    value={(n / total) * 100}
+                    className={`[&_[data-slot=progress-track]]:h-1.5 ${bar}`}
+                  />
+                  <ItemDescription>{desc}</ItemDescription>
+                </ItemContent>
+              </Item>
             </div>
-            <div className="text-xs text-muted-foreground">Green</div>
-          </div>
-          <div>
-            <div className="text-2xl font-bold tabular-nums text-verdict-amber">
-              {tally.amber}
-            </div>
-            <div className="text-xs text-muted-foreground">Amber</div>
-          </div>
-          <div>
-            <div className="text-2xl font-bold tabular-nums text-verdict-red">
-              {tally.red}
-            </div>
-            <div className="text-xs text-muted-foreground">Red</div>
-          </div>
-        </div>
+          ))}
+        </ItemGroup>
+
         {tally.loadBearingReds > 0 && (
-          <div className="rounded-md border border-highlight/30 bg-highlight/10 p-2 text-xs text-highlight">
-            {tally.loadBearingReds} load-bearing red claim
-            {tally.loadBearingReds > 1 ? "s" : ""} — segment re-record required.
-          </div>
+          <Alert variant="destructive" className="mt-4">
+            <ShieldAlertIcon />
+            <AlertTitle>
+              {tally.loadBearingReds} load-bearing red claim
+              {tally.loadBearingReds > 1 ? "s" : ""}
+            </AlertTitle>
+            <AlertDescription>
+              A red claim the lesson depends on. This forces a
+              revise-before-release verdict — the segment needs re-recording.
+            </AlertDescription>
+          </Alert>
         )}
       </CardContent>
     </Card>
@@ -486,141 +544,27 @@ function VerticalFitCard({ fit }: { fit: VerticalFit }) {
           <span className="text-highlight">{fit.rating}</span>
         </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-2 text-sm">
-        <div>
-          <span className="text-muted-foreground">Best fit:</span>{" "}
-          <span>{fit.bestFit}</span>
-        </div>
-        <div>
-          <span className="text-muted-foreground">Secondary:</span>{" "}
-          <span>{fit.secondary}</span>
-        </div>
-        <p className="pt-1 leading-relaxed text-muted-foreground">
+      <CardContent className="space-y-3">
+        <ItemGroup>
+          <Item size="xs">
+            <ItemContent>
+              <ItemDescription>Best fit</ItemDescription>
+              <ItemTitle>{fit.bestFit}</ItemTitle>
+            </ItemContent>
+          </Item>
+          <ItemSeparator />
+          <Item size="xs">
+            <ItemContent>
+              <ItemDescription>Secondary</ItemDescription>
+              <ItemTitle>{fit.secondary}</ItemTitle>
+            </ItemContent>
+          </Item>
+        </ItemGroup>
+        <p className="text-sm leading-relaxed text-muted-foreground">
           {fit.justification}
         </p>
       </CardContent>
     </Card>
-  )
-}
-
-function ClaimsTable({ claims }: { claims: ClaimItem[] }) {
-  if (!claims.length) {
-    return (
-      <Empty>
-        <EmptyHeader>
-          <EmptyTitle>No claims extracted</EmptyTitle>
-          <EmptyDescription>
-            The transcript had no claimable statements.
-          </EmptyDescription>
-        </EmptyHeader>
-      </Empty>
-    )
-  }
-  return (
-    <Card>
-      <CardContent className="p-0">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-12">#</TableHead>
-              <TableHead>Claim</TableHead>
-              <TableHead className="w-24">Verdict</TableHead>
-              <TableHead className="w-28">Flags</TableHead>
-              <TableHead>Basis</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {claims.map((c) => (
-              <TableRow key={c.index}>
-                <TableCell className="font-mono text-xs text-muted-foreground">
-                  {c.index}
-                </TableCell>
-                <TableCell>
-                  <div className="space-y-1">
-                    <p className="leading-relaxed">{c.claim}</p>
-                    {c.correction && (
-                      <p className="text-xs text-muted-foreground">
-                        <span className="font-medium">Correction:</span>{" "}
-                        {c.correction}
-                      </p>
-                    )}
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <VerdictBadgeForClaim verdict={c.verdict} />
-                </TableCell>
-                <TableCell>
-                  <div className="flex flex-wrap gap-1">
-                    {c.loadBearing && (
-                      <Badge variant="secondary" className="text-[10px]">
-                        Load-bearing
-                      </Badge>
-                    )}
-                    {c.knownMyth && (
-                      <Badge variant="outline" className="text-[10px]">
-                        Known myth
-                      </Badge>
-                    )}
-                    {!c.loadBearing && !c.knownMyth && (
-                      <span className="text-xs text-muted-foreground">—</span>
-                    )}
-                  </div>
-                </TableCell>
-                <TableCell className="text-xs text-muted-foreground">
-                  {c.basis || (
-                    <span className="italic">No basis provided.</span>
-                  )}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </CardContent>
-    </Card>
-  )
-}
-
-function VerdictBadgeForClaim({ verdict }: { verdict: ClaimItem["verdict"] }) {
-  if (verdict === "green")
-    return <Badge className="bg-verdict-green text-white">Green</Badge>
-  if (verdict === "amber")
-    return <Badge className="bg-verdict-amber text-black">Amber</Badge>
-  return <Badge variant="destructive">Red</Badge>
-}
-
-function ScorecardGrid({ scorecard }: { scorecard: Scorecard }) {
-  const items: Array<[string, number | undefined]> = [
-    ["Factual accuracy", scorecard.factualAccuracy],
-    ["Evidence grounding", scorecard.evidenceGrounding],
-    ["Citation hygiene", scorecard.citationHygiene],
-    ["Epistemic hygiene", scorecard.epistemicHygiene],
-    ["Pedagogical soundness", scorecard.pedagogicalSoundness],
-    ["Internal coherence", scorecard.internalCoherence],
-    ["Delivery cleanliness", scorecard.deliveryCleanliness],
-    ["Currency", scorecard.currency],
-    ["Localization", scorecard.localization],
-    ["Editorial neutrality", scorecard.editorialNeutrality],
-  ]
-  return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-      {items
-        .filter(([, v]) => v != null)
-        .map(([label, value]) => (
-          <Card key={label}>
-            <CardHeader>
-              <CardDescription>{label}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-baseline gap-2">
-                <span className="text-3xl font-bold tabular-nums">
-                  {value!.toFixed(1)}
-                </span>
-                <span className="text-muted-foreground">/ 10</span>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-    </div>
   )
 }
 

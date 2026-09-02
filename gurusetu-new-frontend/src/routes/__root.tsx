@@ -60,7 +60,7 @@ function RootLayout() {
               <span className="text-xs text-muted-foreground">Quality Check</span>
             </div>
           </Link>
-          <nav className="ml-4 flex items-center gap-1 text-sm">
+          <nav className="ml-2 flex min-w-0 items-center gap-1 text-sm sm:ml-4">
             <NavLink to="/" icon={<LayoutDashboardIcon className="size-4" />}>
               Dashboard
             </NavLink>
@@ -71,7 +71,7 @@ function RootLayout() {
               Settings
             </NavLink>
           </nav>
-          <div className="ml-auto flex items-center gap-3">
+          <div className="ml-auto flex shrink-0 items-center gap-3">
             {username && (
               <span className="hidden text-xs text-muted-foreground sm:inline">
                 Signed in as{" "}
@@ -80,7 +80,7 @@ function RootLayout() {
             )}
             <Button variant="ghost" size="sm" onClick={() => void logout()}>
               <LogOutIcon className="size-4" />
-              Sign out
+              <span className="hidden sm:inline">Sign out</span>
             </Button>
           </div>
         </div>
@@ -122,7 +122,7 @@ function NavLink({
       )}
     >
       {icon}
-      {children}
+      <span className="hidden sm:inline">{children}</span>
     </Link>
   )
 }
