@@ -381,10 +381,16 @@ class ReportWriter {
     const stamp = `Generated ${fmtDate(new Date())} · GuruSetu QC · ${this.e.evaluationId}`;
     for (let i = range.start; i < range.start + range.count; i++) {
       pdf.switchToPage(i);
+      // The stamp sits inside the bottom margin. pdfkit auto-paginates any
+      // text that starts below the margin line, which would append a blank
+      // page for every real one, so lift the margin while writing it.
+      const savedBottom = pdf.page.margins.bottom;
+      pdf.page.margins.bottom = 0;
       const y = pdf.page.height - PAGE.margin + 14;
       pdf.fillColor(COLOR.muted).font('Body').fontSize(7.5);
       pdf.text(stamp, this.left, y, { width: this.width - 60, lineBreak: false });
       pdf.text(`${i - range.start + 1} / ${range.count}`, this.left + this.width - 60, y, { width: 60, align: 'right', lineBreak: false });
+      pdf.page.margins.bottom = savedBottom;
     }
   }
 
