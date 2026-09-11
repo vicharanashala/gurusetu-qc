@@ -2,6 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router"
 import { useState } from "react"
 import {
   ArrowLeftIcon,
+  DownloadIcon,
   RefreshCwIcon,
   Trash2Icon,
   LoaderIcon,
@@ -77,6 +78,7 @@ function EvaluationDetail() {
   const [actionError, setActionError] = useState<string | null>(null)
   const [rerunning, setRerunning] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [downloading, setDownloading] = useState(false)
 
   const e = evalState.data
 
@@ -99,6 +101,19 @@ function EvaluationDetail() {
       setActionError(err instanceof Error ? err.message : "Re-run failed")
     } finally {
       setRerunning(false)
+    }
+  }
+
+  const onDownloadPdf = async () => {
+    if (!e) return
+    setActionError(null)
+    setDownloading(true)
+    try {
+      await api.downloadReportPdf(e.evaluationId)
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "PDF download failed")
+    } finally {
+      setDownloading(false)
     }
   }
 
@@ -155,6 +170,22 @@ function EvaluationDetail() {
           }
         />
         <div className="flex items-center gap-2">
+          {/* The PDF is the same report as the tabs below, so it only makes
+              sense once there is an analysis to print. */}
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={downloading || !analysis}
+            onClick={onDownloadPdf}
+            title={analysis ? "Download the full report as PDF" : "Available once the analysis completes"}
+          >
+            {downloading ? (
+              <LoaderIcon className="size-4 animate-spin" />
+            ) : (
+              <DownloadIcon className="size-4" />
+            )}
+            Download PDF
+          </Button>
           <Button
             variant="outline"
             size="sm"

@@ -9,13 +9,16 @@ import {
   Patch,
   Post,
   Query,
+  Res,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../config/configuration';
 import { EvaluationsService } from './evaluations.service';
+import { ReportPdfService } from './report-pdf.service';
 import {
   CreateTextEvaluationDto,
   CreateYoutubeEvaluationDto,
@@ -27,6 +30,7 @@ import { EvaluationSourceType } from './schemas/evaluation.schema';
 export class EvaluationsController {
   constructor(
     private readonly service: EvaluationsService,
+    private readonly reports: ReportPdfService,
     private readonly config: ConfigService<AppConfig, true>,
   ) {}
 
@@ -91,6 +95,28 @@ export class EvaluationsController {
   @Get('stats')
   async stats() {
     return this.service.stats();
+  }
+
+  /**
+   * The full report (overview, scorecard, every claim, transcript) as a PDF
+   * download. Declared before the bare `:evaluationId` route so the literal
+   * segment wins.
+   */
+  @Get(':evaluationId/report.pdf')
+  async reportPdf(
+    @Param('evaluationId') evaluationId: string,
+    @Res() res: Response,
+  ) {
+    const evaluation = await this.service.findOne(evaluationId);
+    const buffer = await this.reports.render(evaluation);
+    const fileName = this.reports.fileNameFor(evaluation);
+    res
+      .status(HttpStatus.OK)
+      .setHeader('Content-Type', 'application/pdf')
+      .setHeader('Content-Length', String(buffer.length))
+      .setHeader('Content-Disposition', `attachment; filename="${fileName}"`)
+      .setHeader('Cache-Control', 'no-store')
+      .send(buffer);
   }
 
   @Get(':evaluationId')

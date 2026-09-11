@@ -160,6 +160,43 @@ export const api = {
       method: "DELETE",
     }),
 
+  /**
+   * Fetches the report PDF and hands it to the browser as a download. Done via
+   * fetch rather than a plain <a href> so a 401/500 surfaces as an error in
+   * the UI instead of the browser navigating to a JSON error page.
+   */
+  downloadReportPdf: async (id: string): Promise<void> => {
+    const res = await fetch(`${BASE}/evaluations/${id}/report.pdf`, {
+      credentials: "include",
+      headers: { Accept: "application/pdf" },
+    })
+    if (!res.ok) {
+      if (res.status === 401) onUnauthorized?.()
+      let msg = res.statusText
+      try {
+        const body = (await res.json()) as { message?: string | string[] }
+        if (body?.message)
+          msg = Array.isArray(body.message) ? body.message.join("; ") : body.message
+      } catch {
+        // non-JSON error body; keep statusText
+      }
+      throw new ApiError(res.status, msg, null)
+    }
+    const disposition = res.headers.get("Content-Disposition") ?? ""
+    const fileName =
+      /filename="([^"]+)"/.exec(disposition)?.[1] ?? `gurusetu-qc-${id}.pdf`
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = fileName
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    // Give the click a tick to start before revoking the object URL.
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  },
+
   getPrompt: () =>
     request<{
       active: {

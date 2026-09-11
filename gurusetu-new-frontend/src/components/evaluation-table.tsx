@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router"
+import { useState } from "react"
 import { StatusBadge, VerdictBadge } from "@/components/badges"
 import { SourceBadge } from "@/components/source-badge"
 import { Progress } from "@/components/ui/progress"
@@ -12,7 +13,9 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Empty } from "@/components/ui/empty"
+import { api } from "@/lib/api"
 import {
   type Evaluation,
   STATUS_LABELS,
@@ -21,7 +24,9 @@ import {
   ArrowDownIcon,
   ArrowUpIcon,
   ArrowUpDownIcon,
+  DownloadIcon,
   ExternalLinkIcon,
+  LoaderIcon,
 } from "lucide-react"
 import { formatShortDate, formatRelative } from "@/lib/format"
 import type { SortDir, SortKey } from "@/components/filter-bar"
@@ -82,6 +87,9 @@ export function EvaluationTable({
             dir={sortDir}
           >
             Created
+          </Th>
+          <Th className="w-10 pr-4">
+            <span className="sr-only">Actions</span>
           </Th>
         </TableRow>
       </TableHeader>
@@ -257,7 +265,52 @@ function EvaluationRow({ e }: { e: Evaluation }) {
           {formatShortDate(e.createdAt).split(",")[0]}
         </div>
       </TableCell>
+
+      <TableCell className="px-2 py-3 pr-4 align-top text-right">
+        {e.analysis && <DownloadPdfButton evaluationId={e.evaluationId} />}
+      </TableCell>
     </TableRow>
+  )
+}
+
+/**
+ * One-click PDF from the list, so a reviewer collecting several reports does
+ * not have to open each evaluation first. Failure is shown inline on the
+ * button rather than as a page-level banner, since the row is the context.
+ */
+function DownloadPdfButton({ evaluationId }: { evaluationId: string }) {
+  const [busy, setBusy] = useState(false)
+  const [failed, setFailed] = useState<string | null>(null)
+  const onClick = async () => {
+    setBusy(true)
+    setFailed(null)
+    try {
+      await api.downloadReportPdf(evaluationId)
+    } catch (err) {
+      setFailed(err instanceof Error ? err.message : "Download failed")
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      onClick={onClick}
+      disabled={busy}
+      title={failed ? `PDF download failed: ${failed}` : "Download report as PDF"}
+      aria-label="Download report as PDF"
+      className={cn(
+        "text-muted-foreground opacity-60 transition-opacity group-hover:opacity-100 hover:text-foreground",
+        failed && "text-destructive opacity-100",
+      )}
+    >
+      {busy ? (
+        <LoaderIcon className="size-4 animate-spin" />
+      ) : (
+        <DownloadIcon className="size-4" />
+      )}
+    </Button>
   )
 }
 
