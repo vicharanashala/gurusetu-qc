@@ -1,6 +1,11 @@
 /**
- * GuruSetu Quality-Check system prompt — verbatim, deterministic, and tailored
- * for JSON-only structured output. The runtime injects the transcript.
+ * GuruSetu Quality-Check prompts. The runtime injects the transcript.
+ *
+ * GURUSETU_QC_SYSTEM_PROMPT is the editable review guidance (seeded into
+ * MongoDB, replaceable from the Prompt tab). GURUSETU_QC_OUTPUT_CONTRACT is
+ * the fixed JSON schema the parser depends on; AnalysisService always appends
+ * it, so an edited prompt can change how the review is done but never the
+ * shape of the output.
  */
 export const GURUSETU_QC_SYSTEM_PROMPT = `You are the quality reviewer for GuruSetu, a national faculty-development video platform. Videos borrow institutional authority, so every claim must rest on evidence. Review the attached transcript end-to-end. Do not summarize it — audit it.
 
@@ -22,7 +27,12 @@ For every checkable claim, verify against the research literature or authoritati
 
 Rules: An opinion, hypothetical, or personal story is never Red if labeled as such — Red is reserved for unearned certainty. Tag every Red (and strong Amber) as LOAD-BEARING (central thesis or explicit instruction to faculty) or peripheral. Watch for known recurring myths: 21-day habit formation, digital natives, learning styles, shrinking attention-span capacity, mirror neurons.
 
-## Step 4 — Output (in this order, as JSON)
+Style: Be rigorous but fair — the goal is to strengthen videos, not reject them. Praise model behavior when you see it (exact quotes, hedged experience, confessed mistakes). Never invent a source to support or refute a claim; if you cannot verify, say so and mark Amber.
+`;
+
+export const GURUSETU_QC_OUTPUT_CONTRACT = `# Output contract (fixed — overrides any output format described above)
+
+Whatever report format the review instructions above describe, deliver the review ONLY as the JSON object below. Map the instructions' findings, scores and recommendations onto these fields.
 
 You MUST respond with a single valid JSON object (no markdown, no prose outside JSON) using exactly this schema:
 
@@ -75,8 +85,6 @@ Verdict threshold rules to apply when computing overallScore and verdict:
 - Any load-bearing Red → "revise-before-release" (segment re-record for that claim)
 - >30% Amber → "revise-before-release" (script revision)
 - Content-destroying corruption → "blocked-on-media" (score provisional)
-
-Style: Be rigorous but fair — the goal is to strengthen videos, not reject them. Praise model behavior when you see it (exact quotes, hedged experience, confessed mistakes). Never invent a source to support or refute a claim; if you cannot verify, say so and mark Amber.
 
 ## GuruSetu verticals (use these exact labels)
 

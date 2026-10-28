@@ -9,6 +9,7 @@ import { LlmService } from '../llm/llm.service';
 // Bundled default lives in prompts/gurusetu-qc.prompt.ts — kept as a fallback
 // reference; the runtime prompt comes from PromptsService (MongoDB-backed).
 import { PromptsService } from '../prompts/prompts.service';
+import { GURUSETU_QC_OUTPUT_CONTRACT } from './prompts/gurusetu-qc.prompt';
 import {
   AnalysisResult,
   ClaimItem,
@@ -58,12 +59,19 @@ export class AnalysisService {
 
     const result = await this.llm.chat(
       [
-        { role: 'system', content: active.content },
+        // The output contract is appended in code, not stored with the prompt,
+        // so an edited prompt can never drop the schema parseAndValidate needs.
+        {
+          role: 'system',
+          content: `${active.content.trim()}\n\n${GURUSETU_QC_OUTPUT_CONTRACT}`,
+        },
         { role: 'user', content: userPrompt },
       ],
       {
         temperature: 0.2,
-        maxTokens: 16000,
+        // No maxTokens override: use the limit set in Settings → LLM provider.
+        // Reasoning models spend ~12k tokens thinking on the long review
+        // prompt, so the old hard-coded 16000 truncated the JSON mid-claim.
         json: true,
       },
     );
@@ -90,7 +98,7 @@ export class AnalysisService {
     lines.push('```');
     lines.push('');
     lines.push(
-      'Respond with ONLY the JSON object described in the system prompt — no markdown fences, no commentary.',
+      'Respond with ONLY the JSON object defined in the "Output contract" section of the system prompt — no markdown fences, no commentary.',
     );
     return lines.join('\n');
   }
@@ -169,7 +177,13 @@ export class AnalysisService {
   }
 
   private extractJson(raw: string): string {
-    let s = raw.trim();
+    // Reasoning models (e.g. MiniMax) can emit <think>…</think> even with
+    // thinking disabled; braces inside it would be mistaken for the JSON.
+    // An unclosed <think> means the budget ran out before any answer.
+    let s = raw
+      .replace(/<think>[\s\S]*?<\/think>/gi, '')
+      .replace(/<think>[\s\S]*$/i, '')
+      .trim();
     // strip ``` fences if the model wrapped it
     s = s.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '');
     const first = s.indexOf('{');
