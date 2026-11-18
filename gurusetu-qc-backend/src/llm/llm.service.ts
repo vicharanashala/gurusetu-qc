@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { Agent, fetch as undiciFetch } from 'undici';
 import {
   LlmConfigService,
   ResolvedLlmConfig,
@@ -29,6 +30,19 @@ export interface ChatResult {
     totalTokens?: number;
   };
 }
+
+/**
+ * Non-streaming completions send no response headers until the whole answer
+ * is generated. Node's built-in fetch gives up after 300s waiting for headers
+ * ("fetch failed"), and MiniMax-M3 with a long thinking budget can exceed
+ * that on a busy day (11/18: every evaluation died at exactly 5 min). Use a
+ * dedicated dispatcher with a 20-minute ceiling for LLM calls only.
+ */
+const LLM_TIMEOUT_MS = 20 * 60 * 1000;
+const llmDispatcher = new Agent({
+  headersTimeout: LLM_TIMEOUT_MS,
+  bodyTimeout: LLM_TIMEOUT_MS,
+});
 
 const DEFAULT_ANTHROPIC_BASE = 'https://api.anthropic.com/v1';
 const DEFAULT_OPENAI_BASE = 'https://api.openai.com/v1';
@@ -65,7 +79,9 @@ export class LlmService {
       );
     }
     if (!cfg.model) {
-      throw new Error('No model configured. Set one in Settings → LLM provider.');
+      throw new Error(
+        'No model configured. Set one in Settings → LLM provider.',
+      );
     }
 
     const temperature = options.temperature ?? cfg.temperature;
@@ -116,7 +132,12 @@ export class LlmService {
     }
 
     const base = (cfg.baseUrl || DEFAULT_ANTHROPIC_BASE).replace(/\/$/, '');
-    const data = await this.post(`${base}/messages`, headers, body, options.signal);
+    const data = await this.post(
+      `${base}/messages`,
+      headers,
+      body,
+      options.signal,
+    );
 
     let content = '';
     if (Array.isArray(data.content)) {
@@ -127,7 +148,8 @@ export class LlmService {
         }
       }
     }
-    if (!content && typeof data.completion === 'string') content = data.completion;
+    if (!content && typeof data.completion === 'string')
+      content = data.completion;
 
     return {
       content,
@@ -205,12 +227,24 @@ export class LlmService {
     body: unknown,
     signal?: AbortSignal,
   ): Promise<Record<string, any>> {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-      signal,
-    });
+    let res: Awaited<ReturnType<typeof undiciFetch>>;
+    try {
+      res = await undiciFetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal,
+        dispatcher: llmDispatcher,
+      });
+    } catch (err) {
+      // undici hides the real reason (timeout, DNS, reset) in err.cause.
+      const cause = (err as { cause?: { code?: string; message?: string } })
+        ?.cause;
+      const detail = cause
+        ? ` (${cause.code ?? ''} ${cause.message ?? ''})`.replace('( ', '(')
+        : '';
+      throw new Error(`LLM request failed: ${(err as Error).message}${detail}`);
+    }
     if (!res.ok) {
       const text = await res.text();
       // Truncate: provider errors can echo the whole request back.

@@ -40,6 +40,7 @@
     "pdfkit": "^0.18.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
+    "undici": "^7.30.2",
     "uuid": "^14.0.2",
     "yt-dlp-wrap": "^2.3.12"
   },
