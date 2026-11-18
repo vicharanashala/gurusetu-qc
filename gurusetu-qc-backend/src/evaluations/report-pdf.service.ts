@@ -60,16 +60,26 @@ const AXES: Array<{ key: string; label: string; description: string }> = [
  * Cyrillic. Fall back to Helvetica only if the system font is missing.
  */
 const FONT_DIR = '/usr/share/fonts/truetype/dejavu';
-const FONTS = {
-  Body: { file: `${FONT_DIR}/DejaVuSans.ttf`, fallback: 'Body' },
-  Bold: { file: `${FONT_DIR}/DejaVuSans-Bold.ttf`, fallback: 'Bold' },
-  Italic: { file: `${FONT_DIR}/DejaVuSans-Oblique.ttf`, fallback: 'Italic' },
-} as const;
+/**
+ * Each face tries its files in order, then a pdfkit built-in (always present).
+ * DejaVuSans-Oblique ships in fonts-dejavu-extra, which this server lacks, so
+ * Italic falls back to upright DejaVu Sans — losing the slant is better than
+ * losing diacritics. (The old fallback registered a *file* called 'Italic',
+ * so every report with an unscored axis 500'd with ENOENT.)
+ */
+const FONTS: Record<string, { files: string[]; builtin: string }> = {
+  Body: { files: [`${FONT_DIR}/DejaVuSans.ttf`], builtin: 'Helvetica' },
+  Bold: { files: [`${FONT_DIR}/DejaVuSans-Bold.ttf`], builtin: 'Helvetica-Bold' },
+  Italic: {
+    files: [`${FONT_DIR}/DejaVuSans-Oblique.ttf`, `${FONT_DIR}/DejaVuSans.ttf`],
+    builtin: 'Helvetica-Oblique',
+  },
+};
 
 function registerFonts(pdf: PDFKit.PDFDocument) {
-  for (const [name, { file, fallback }] of Object.entries(FONTS)) {
-    if (existsSync(file)) pdf.registerFont(name, file);
-    else pdf.registerFont(name, fallback);
+  for (const [name, { files, builtin }] of Object.entries(FONTS)) {
+    const file = files.find((f) => existsSync(f));
+    pdf.registerFont(name, file ?? builtin);
   }
 }
 
